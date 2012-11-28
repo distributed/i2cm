@@ -36,4 +36,5 @@ func (t transactor8x8) Transact8x8(addr Addr, regaddr uint8, w []byte, r []byte)
 	// start again
 	// write device addr
 	// read into r
+	return errors.New("not implemented")
 }
