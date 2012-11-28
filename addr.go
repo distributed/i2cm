@@ -11,7 +11,7 @@ func (a Addr7) GetBaseAddr() uint16 {
 	return uint16(a & 0x7f)
 }
 
-func (a Addr) GetAddrLen() int {
+func (a Addr7) GetAddrLen() int {
 	return 7
 }
 
@@ -21,6 +21,6 @@ func (a Addr10) GetBaseAddr() uint16 {
 	return uint16(a & 0x03ff)
 }
 
-func (a Addr10) GetAddrLen() {
+func (a Addr10) GetAddrLen() int {
 	return 10
 }
