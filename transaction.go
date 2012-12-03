@@ -13,6 +13,9 @@ type transactor8x8 struct {
 }
 
 func NewTransact8x8(m I2CMaster) Transactor8x8 {
+	if t, ok := m.(Transactor8x8); ok {
+		return t
+	}
 	return transactor8x8{m}
 }
 
