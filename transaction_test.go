@@ -2,7 +2,6 @@ package i2cm
 
 import (
 	"fmt"
-	"reflect"
 	"testing"
 )
 
@@ -161,6 +160,7 @@ func (m *memdev256) WriteByte(b byte) error {
 
 	} else if m.state == md8x8_receive_regaddr {
 		m.regaddr = b
+		m.state = md8x8_addressed
 		return nil
 
 	} else if m.state == md8x8_addressed {
@@ -188,29 +188,100 @@ func (m *memdev256) ReadByte(ack bool) (byte, error) {
 }
 
 func TestTransactionLog(t *testing.T) {
-	var md256 = newmemdev256(Addr7(0xa0 >> 1))
-	var m = &i2cRecorder{md256, nil}
-
-	NewTransact8x8(m).Transact8x8(Addr7(0xa0>>1), 0x22, []byte{0xab, 0xcd}, []byte{0x01, 0x02, 0x03})
-	exp := []i2cItem{{t_START, 0, false, nil},
+	// currently there are only non-failing use cases of Transact8x8
+	// in this function. a failing use case of Transact8x8 can be
+	// found in TestNoDevice
+	cases := []struct {
+		regaddr uint8
+		wb      []byte // bytes to write
+		erb     []byte // bytes expected to be written
+		explog  []i2cItem
+	}{{0x34, []byte{0xfe}, nil, []i2cItem{{t_START, 0, false, nil}, // random write
 		{t_WRITE, 0xa0, false, nil},
-		{t_WRITE, 0x22, false, nil},
-		{t_WRITE, 0xab, false, nil},
-		{t_WRITE, 0xcd, false, nil},
-		{t_START, 0x00, false, nil},
-		{t_WRITE, 0xa1, false, nil},
-		{t_READ, 0x00, true, nil},
-		{t_READ, 0x00, true, nil},
-		{t_READ, 0x00, false, nil},
+		{t_WRITE, 0x34, false, nil},
+		{t_WRITE, 0xfe, false, nil},
 		{t_STOP, 0x00, false, nil},
-	}
+	}},
+		{0x50, nil, nil, []i2cItem{{t_START, 0, false, nil}, // just addr write
+			{t_WRITE, 0xa0, false, nil},
+			{t_WRITE, 0x50, false, nil},
+			{t_STOP, 0x00, false, nil},
+		}},
+		{0x30, nil, []byte{0x80, 0x81}, []i2cItem{{t_START, 0, false, nil}, // addr write, then read
+			{t_WRITE, 0xa0, false, nil},
+			{t_WRITE, 0x30, false, nil},
+			{t_START, 0x00, false, nil},
+			{t_WRITE, 0xa1, false, nil},
+			{t_READ, 0x80, true, nil},
+			{t_READ, 0x81, false, nil},
+			{t_STOP, 0x00, false, nil},
+		}},
+		{0x22, []byte{0xab, 0xcd}, []byte{0x01, 0x02, 0x03}, []i2cItem{{t_START, 0, false, nil}, // addr write, data write, then read
+			{t_WRITE, 0xa0, false, nil},
+			{t_WRITE, 0x22, false, nil},
+			{t_WRITE, 0xab, false, nil},
+			{t_WRITE, 0xcd, false, nil},
+			{t_START, 0x00, false, nil},
+			{t_WRITE, 0xa1, false, nil},
+			{t_READ, 0x01, true, nil},
+			{t_READ, 0x02, true, nil},
+			{t_READ, 0x03, false, nil},
+			{t_STOP, 0x00, false, nil},
+		}}}
 
-	_ = exp
-	_ = reflect.DeepEqual
+caseloop:
+	for j, tc := range cases {
+		md256 := newmemdev256(Addr7(0xa0 >> 1))
+		m := &i2cRecorder{md256, nil}
 
-	for i, e := range m.log {
-		if e != exp[i] {
-			t.Fatalf("i2c log differs at item %d. expected %v, got %v", i, exp[i], e)
+		so := int(tc.regaddr) + len(tc.wb)
+		eo := so + len(tc.erb)
+		copy(md256.mem[so:eo], tc.erb)
+
+		rb := make([]byte, len(tc.erb))
+
+		nw, nr, err := NewTransact8x8(m).Transact8x8(Addr7(0xa0>>1), tc.regaddr, tc.wb, rb)
+
+		if err != nil {
+			t.Errorf("transaction %d is not expected to fail. it returned the error %T: %#v\n", j, err, err)
+			continue caseloop
+		}
+
+		if nw != len(tc.wb) {
+			t.Errorf("transaction %d: expected %d bytes written, got %d\n", j, len(tc.wb), nw)
+			continue
+		}
+
+		if nr != len(tc.erb) {
+			t.Errorf("transaction %d: expected %d bytes read, got %d\n", j, len(tc.erb), nr)
+			continue
+		}
+
+		if len(m.log) > len(tc.explog) {
+			t.Errorf("real log for test case %d is longer than expected log\n", j)
+			t.Errorf("real log: %#v\n", m.log)
+			t.Errorf("exp log: %#v\n", tc.explog)
+			continue caseloop
+		}
+
+		// checking what the transaction has read vs. what it should have read
+		if string(rb) != string(tc.erb) {
+			t.Errorf("test case %d: expected transaction to read % x, it read % x\n", j, tc.erb, rb)
+			continue caseloop
+		}
+
+		// checking what the transaction wrote into the memdev256's memory
+		byteswritten := md256.mem[tc.regaddr : int(tc.regaddr)+len(tc.wb)]
+		if string(tc.wb) != string(byteswritten) {
+			t.Errorf("test case %d: expected the transaction to have written % x, it did write % x\n", j, tc.wb, byteswritten)
+		}
+
+		// check i2c log
+		for i, e := range m.log {
+			if e != tc.explog[i] {
+				t.Errorf("test case %d: i2c log differs at item %d. expected %v, got %v", j, i, tc.explog[i], e)
+				continue caseloop
+			}
 		}
 	}
 }
