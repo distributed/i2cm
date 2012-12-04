@@ -2,6 +2,7 @@ package i2cm
 
 import (
 	"fmt"
+	"reflect"
 	"testing"
 )
 
@@ -190,9 +191,26 @@ func TestTransactionLog(t *testing.T) {
 	var md256 = newmemdev256(Addr7(0xa0 >> 1))
 	var m = &i2cRecorder{md256, nil}
 
-	NewTransact8x8(m).Transact8x8(Addr7(0xa0>>1), 34, []byte{0xab, 0xcd}, []byte{0x01, 0x02, 0x03})
+	NewTransact8x8(m).Transact8x8(Addr7(0xa0>>1), 0x22, []byte{0xab, 0xcd}, []byte{0x01, 0x02, 0x03})
+	exp := []i2cItem{{t_START, 0, false, nil},
+		{t_WRITE, 0xa0, false, nil},
+		{t_WRITE, 0x22, false, nil},
+		{t_WRITE, 0xab, false, nil},
+		{t_WRITE, 0xcd, false, nil},
+		{t_START, 0x00, false, nil},
+		{t_WRITE, 0xa1, false, nil},
+		{t_READ, 0x00, true, nil},
+		{t_READ, 0x00, true, nil},
+		{t_READ, 0x00, false, nil},
+		{t_STOP, 0x00, false, nil},
+	}
 
-	for _, e := range m.log {
-		t.Logf("e %v", e)
+	_ = exp
+	_ = reflect.DeepEqual
+
+	for i, e := range m.log {
+		if e != exp[i] {
+			t.Fatalf("i2c log differs at item %d. expected %v, got %v", i, exp[i], e)
+		}
 	}
 }
