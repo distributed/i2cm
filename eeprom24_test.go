@@ -141,3 +141,40 @@ func TestEEPROM24EOF(t *testing.T) {
 		}
 	}
 }
+
+func TestEEPROM24Conf(t *testing.T) {
+	defconf := EEPROM24Config{1, 1, 0}
+	devaddr := Addr7(0xA0 >> 1)
+	tr := newPVT24(defconf, t)
+
+	// one valid configuration as a counter check
+	{
+		if _, err := NewEEPROM24(tr, devaddr, defconf); err != nil {
+			t.Errorf("NewEEPROM24 failed on valid configuration %#v\n", err)
+		}
+	}
+
+	// pagesize not power of 2
+	{
+		conf := EEPROM24Config{2048, 13, 0}
+		if _, err := NewEEPROM24(tr, devaddr, conf); err == nil {
+			t.Errorf("NewEEPROM24 did not fail on invalid configuration %#v", conf)
+		}
+	}
+
+	// size not power of 2
+	{
+		conf := EEPROM24Config{100, 16, 0}
+		if _, err := NewEEPROM24(tr, devaddr, conf); err == nil {
+			t.Errorf("NewEEPROM24 did not fail on invalid configuration %#v", conf)
+		}
+	}
+
+	// size and page size not power of 2
+	{
+		conf := EEPROM24Config{100, 13, 0}
+		if _, err := NewEEPROM24(tr, devaddr, conf); err == nil {
+			t.Errorf("NewEEPROM24 did not fail on invalid configuration %#v", conf)
+		}
+	}
+}

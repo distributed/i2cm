@@ -27,14 +27,31 @@ type EEPROM24 interface {
 	io.Writer
 }
 
-func NewEEPROM24(m I2CMaster, devaddr Addr, conf EEPROM24Config) (EEPROM24, error) {
-	var e ee24
+func ispow2(i uint64) bool {
+	for (i&0x01) == 0 && i > 0 {
+		i >>= 1
+	}
+	return i == 1
+}
 
-	// TODO: check config for validity
+func NewEEPROM24(m I2CMaster, devaddr Addr, conf EEPROM24Config) (EEPROM24, error) {
+	if conf.PageSize > conf.Size {
+		return nil, errors.New("EEPROM24: page size needs to be smaller than array size")
+	}
+
+	if !ispow2(uint64(conf.Size)) {
+		return nil, errors.New("EEPROM24: array size needs to be a power of 2")
+	}
+
+	if !ispow2(uint64(conf.PageSize)) {
+		return nil, errors.New("EEPROM24: page size needs to be a power of 2")
+	}
 
 	if devaddr.GetAddrLen() != 7 {
 		return nil, errors.New("only EEPROMs with 7 bit device addresses are supported")
 	}
+
+	var e ee24
 
 	e.m = m
 	e.EEPROM24Config = conf
