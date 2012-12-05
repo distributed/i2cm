@@ -86,10 +86,12 @@ func TestEEPROM24EOF(t *testing.T) {
 		t.Fatalf("NewEEPROM24 should not fail in this context. it did with % T: %#v\n", err, err)
 	}
 
-	if _, err := ee.Seek(int64(conf.Size-3), 0); err != nil {
-		t.Fatalf("seek should not fail in this context. it did with % T: %#v\n", err, err)
+	_ee, ok := ee.(*ee24)
+	if !ok {
+		t.Fatalf("expected to test an ee24, got %T: %#v\n", ee, ee)
 	}
 
+	_ee.p = conf.Size - 3
 	{
 		rb := make([]byte, 16)
 		n, err := ee.Read(rb)
@@ -97,12 +99,34 @@ func TestEEPROM24EOF(t *testing.T) {
 			t.Fatalf("expected to read 3 bytes, got %d\n", n)
 		}
 
-		t.Logf("got n %d err %v\n", n, err)
-
 		if err != io.EOF {
 			if err == nil {
 				n, err := ee.Read(rb)
-				t.Logf("got n %d err %v\n", n, err)
+
+				if n != 0 {
+					t.Fatalf("expected to read 0 bytes with the second shot, got %d\n", n)
+				}
+
+				if err != io.EOF {
+					t.Fatalf("did not get back io.EOF even though EEPROM24 was asked twice, got: %T: %#v\n", err, err)
+				}
+			} else {
+				t.Fatalf("expected EOF, got %T: %#v", err)
+			}
+		}
+	}
+
+	_ee.p = conf.Size - 5
+	{
+		wb := make([]byte, 16)
+		n, err := ee.Write(wb)
+		if n != 5 {
+			t.Fatalf("expected to write 5 bytes, wrote %d\n", n)
+		}
+
+		if err != io.EOF {
+			if err == nil {
+				n, err := ee.Write(wb)
 
 				if n != 0 {
 					t.Fatalf("expected to read 0 bytes with the second shot, got %d\n", n)
