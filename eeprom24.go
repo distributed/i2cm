@@ -14,6 +14,9 @@ type EEPROM24Config struct {
 
 var Conf_24C02 = EEPROM24Config{256, 8, 5 * time.Millisecond}
 
+// ee24 supports EEPROMs which require an 8 bit word
+// address. IIRC, this includes types up to 24c16.
+// 24c32 devices and up require a 16 word address.
 type ee24 struct {
 	EEPROM24Config
 	m       I2CMaster
