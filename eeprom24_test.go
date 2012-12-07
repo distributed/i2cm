@@ -15,6 +15,9 @@ type t8x8item struct {
 
 // page verifying transactor for 24Cxx style EEPROMs
 // it's always based at address (0xA0 >> 1).
+// rollover inside a page is not supported as this
+// behavior is not exploited by the EEPROM drivers
+// in this package.
 // also logs.
 type PVT24 struct {
 	t        *testing.T
@@ -72,7 +75,7 @@ func newPVT24(conf EEPROM24Config, t *testing.T) *PVT24 {
 	p.t = t
 
 	for i := range p.mem {
-		p.mem[i] = 0x24
+		p.mem[i] = 0x24 ^ uint8(i)
 	}
 
 	return &p
@@ -175,6 +178,101 @@ func TestEEPROM24Conf(t *testing.T) {
 		conf := EEPROM24Config{100, 13, 0}
 		if _, err := NewEEPROM24(tr, devaddr, conf); err == nil {
 			t.Errorf("NewEEPROM24 did not fail on invalid configuration %#v", conf)
+		}
+	}
+}
+
+// input/output testing for Read and Write. as this test employs pvt24,
+// the test will fail on transaction which ignore page size and the offset
+// in the page.
+func TestEEPROM24InOut(t *testing.T) {
+	cases := []struct {
+		conf   EEPROM24Config
+		offs   uint // offset to seek to at the start
+		read   bool
+		buf    []byte // with read buf is just used to indicate the size, data is verified with the pvt24 mem pattern
+		nexp   int
+		errexp error
+	}{{EEPROM24Config{1024, 8, 0}, 6, true, []byte{0x22, 0x23, 0x2c, 0x2d, 0x2e, 0x2f}, 6, nil},
+		{EEPROM24Config{128, 8, 0}, 123, true, []byte{0x5f, 0x58, 0x59, 0x5a, 0x5b, 0x00, 0x00, 0x00, 0x00}, 5, nil}, // double shot EOF returns err==nil on first call
+		{EEPROM24Config{2048, 4, 0}, 9, false, []byte{0x0fe}, 1, nil},                                                // single byte write
+		{EEPROM24Config{2048, 4, 0}, 2040, false, []byte{0xfc, 0xfd, 0xfe, 0xff}, 4, nil},                            // full page
+		{EEPROM24Config{2048, 4, 0}, 513, false, []byte{0x01, 0x02, 0x03, 0x04}, 4, nil},                             // 1 byte in next page
+		{EEPROM24Config{512, 4, 0}, 239, false, []byte{1, 2, 3, 4, 5, 6}, 6, nil},                                    // 1 byte partial, 4 bytes full, 1 byte partial
+		{EEPROM24Config{512, 8, 0}, 254, false, []byte{1, 2, 3}, 3, nil},                                             // span i2c device boundary
+		{EEPROM24Config{1024, 16, 0}, 1022, false, []byte{1, 2, 3, 4}, 2, io.EOF},                                    // test EOF. write employs a single shot EOF strategy
+	}
+
+	for i, c := range cases {
+		devaddr := Addr7(0xA0 >> 1)
+		tr := newPVT24(c.conf, t)
+
+		ee, err := NewEEPROM24(tr, devaddr, c.conf)
+		if err != nil {
+			t.Errorf("NewEEPROM failed unexpectedly on configuration %T: %#v", c.conf, c.conf)
+			continue
+		}
+
+		_ee := ee.(*ee24)
+		_ee.p = c.offs
+
+		var n int
+		var rb []byte
+
+		if c.read {
+			rb = make([]byte, len(c.buf))
+			n, err = ee.Read(rb)
+
+			if n != c.nexp {
+				t.Errorf("case %d: expected ee24 to read %d bytes, it read %d\n", i, c.nexp, n)
+				continue
+			}
+
+			if err != c.errexp {
+				t.Errorf("case %d: expected ee24.Read to return error %#v, it returned %T: %#v", i, c.errexp, err)
+				continue
+			}
+
+			if n > len(c.buf) {
+				t.Errorf("case %d: ee.Read read %d bytes, even though the slice only contains %d bytes", i, n, len(c.buf))
+				continue
+			}
+
+			expp := c.offs + uint(c.nexp)
+			if _ee.p != expp {
+				t.Errorf("case %d: expected file pointer to be at %d at the end of ee.Read, it is at %d", i, expp, _ee.p)
+				continue
+			}
+
+			if string(rb[0:n]) != string(c.buf[0:c.nexp]) {
+				t.Errorf("case %d: ee24.Read is expected to read bytes % x, it read % x", i, c.buf[0:c.nexp], rb[0:n])
+				continue
+			}
+		} else {
+			n, err = ee.Write(c.buf)
+
+			if n != c.nexp {
+				t.Errorf("case %d: expected to write %d bytes, ee24 wrote %d", i, n, c.nexp)
+				continue
+			}
+
+			if err != c.errexp {
+				t.Error("case %d: expected error %#v, got %T: #%v", i, c.errexp, err, err)
+				continue
+			}
+
+			expp := c.offs + uint(c.nexp)
+			if _ee.p != expp {
+				t.Errorf("case %d: expected file pointer to be at %d at the end of ee.Write, it its at %d", i, expp, _ee.p)
+				continue
+			}
+
+			wmem := tr.mem[c.offs : c.offs+uint(c.nexp)]
+			wbuf := c.buf[:c.nexp]
+			if string(wmem) != string(wbuf) {
+				t.Errorf("case %d: expected ee.Write to have written % x, it wrote % x", i, wbuf, wmem)
+				continue
+			}
 		}
 	}
 }
