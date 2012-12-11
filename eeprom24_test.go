@@ -128,19 +128,25 @@ func TestEEPROM24EOF(t *testing.T) {
 		}
 
 		if err != io.EOF {
-			if err == nil {
-				n, err := ee.Write(wb)
+			t.Fatalf("ee24.Write past EOF: expected EOF, got %T: %#v", err)
+		}
 
-				if n != 0 {
-					t.Fatalf("expected to read 0 bytes with the second shot, got %d\n", n)
-				}
+		if _ee.p != conf.Size {
+			t.Fatalf("ee24 file pointer at EOF should be at %#04x, however it is at %#04x", conf.Size, _ee.p)
+		}
 
-				if err != io.EOF {
-					t.Fatalf("did not get back io.EOF even though EEPROM24 was asked twice, got: %T: %#v\n", err, err)
-				}
-			} else {
-				t.Fatalf("expected EOF, got %T: %#v", err)
-			}
+		n, err = ee.Write(wb)
+
+		if n != 0 {
+			t.Fatalf("expected to read 0 bytes with the second shot, got %d\n", n)
+		}
+
+		if err != io.EOF {
+			t.Fatalf("ee24.Write at EOF: expected EOF, got: %T: %#v\n", err, err)
+		}
+
+		if _ee.p != conf.Size {
+			t.Fatalf("ee24 file pointer at EOF should be at %#04x, however it is at %#04x", conf.Size, _ee.p)
 		}
 	}
 }
