@@ -4,6 +4,27 @@ import (
 	"errors"
 )
 
+// Transactor encompasses all implemented I2C bus transaction
+// types.
+type Transactor interface {
+	Transactor8x8
+}
+
+type transactor struct {
+	Transactor8x8
+}
+
+// NewTransactor returns all implemented I2C transactors
+// based on the argument I2CMaster. This is a convenience
+// function which consolidates the results of the 
+// NewTransact*x* family of functions.
+func NewTransactor(m I2CMaster) Transactor {
+	var t transactor
+	t.Transactor8x8 = NewTransact8x8(m)
+
+	return &t
+}
+
 type Transactor8x8 interface {
 	Transact8x8(addr Addr, regaddr uint8, w []byte, r []byte) (nw, nr int, err error)
 }
