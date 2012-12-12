@@ -20,13 +20,15 @@ func NewTransact8x8(m I2CMaster) Transactor8x8 {
 }
 
 func (t transactor8x8) Transact8x8(addr Addr, regaddr uint8, w []byte, r []byte) (int, int, error) {
-	m := t.m
+	return I2CMasterTransact8x8(t.m, addr, regaddr, w, r)
+}
 
+func I2CMasterTransact8x8(m I2CMaster, addr Addr, regaddr uint8, w []byte, r []byte) (int, int, error) {
 	nr := 0
 	nw := 0
 
 	if addr.GetAddrLen() != 7 {
-		return nw, nr, errors.New("Transact8x8: only 7 bit addresses are supported")
+		return nw, nr, errors.New("I2CMasterTransact8x8: only 7 bit addresses are supported")
 	}
 
 	if err := m.Start(); err != nil {
