@@ -1,3 +1,7 @@
+// Copyright 2012 Michael Meier. All rights reserved.
+// Use of this source code is governed by an MIT-style
+// license that can be found in the LICENSE file.
+
 // Package i2cm defines low level I2C master access and implements I2C
 // transactions and an 24Cxx EEPROM driver.
 package i2cm

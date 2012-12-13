@@ -1,3 +1,7 @@
+// Copyright 2012 Michael Meier. All rights reserved.
+// Use of this source code is governed by an MIT-style
+// license that can be found in the LICENSE file.
+
 package i2cm
 
 // Addr represents an I2C device address. It supports both 7 bit and
