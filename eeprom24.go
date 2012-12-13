@@ -6,10 +6,12 @@ import (
 	"time"
 )
 
+// EEPROM24Config is used to configure the EEPROM driver to use a
+// specific device.
 type EEPROM24Config struct {
 	Size       uint
 	PageSize   uint
-	WriteDelay time.Duration
+	WriteDelay time.Duration // time to wait after a page write. Address polling is not implemented
 }
 
 var Conf_24C02 = EEPROM24Config{256, 8, 5 * time.Millisecond}
@@ -24,6 +26,10 @@ type ee24 struct {
 	devaddr Addr
 }
 
+// EEPROM24 represents an I2C EEPROM device. The memory array is made
+// available via a file-like interface. The file's size is fixed to
+// the memory array size and writes past the end of the array result
+// in an error.
 type EEPROM24 interface {
 	io.Reader
 	io.Seeker
@@ -37,6 +43,12 @@ func ispow2(i uint64) bool {
 	return i == 1
 }
 
+// NewEEPROM24 constructs an I2C EEPROM driver for a device with base
+// address devaddr residing on m's bus. The EEPROM driver parameters
+// are passed in conf. Invalid configurations are rejected.
+//
+// The EEPROM driver currently uses Transactor8x8 and thus only works
+// correctly for devices with 8 bit register addresses.
 func NewEEPROM24(m I2CMaster, devaddr Addr, conf EEPROM24Config) (EEPROM24, error) {
 	if conf.PageSize > conf.Size {
 		return nil, errors.New("EEPROM24: page size needs to be smaller than array size")
