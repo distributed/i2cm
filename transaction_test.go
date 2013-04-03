@@ -35,6 +35,12 @@ func TestNoDevice(t *testing.T) {
 	if _, _, err := tr.Transact8x8(Addr7(0), 0, nil, nil); err != NoSuchDevice {
 		t.Fatalf("Transact8x8: expected NoSuchDevice, got %T: %#v", err, err)
 	}
+
+	tr16x8 := NewTransact16x8(m)
+	if _, _, err := tr16x8.Transact16x8(Addr7(0), 0, nil, nil); err != NoSuchDevice {
+		t.Fatalf("Transact16x8: expected NoSuchDevice, got %T: %#v", err, err)
+	}
+
 }
 
 const (
@@ -191,27 +197,36 @@ func (m *memdev256) ReadByte(ack bool) (byte, error) {
 	panic("memdev256 cannot be read from when not addressed")
 }
 
+const (
+	T8x8  = iota // only T8x8 uses memdev256
+	T16x8 = iota
+)
+
 func TestTransactionLog(t *testing.T) {
 	// currently there are only non-failing use cases of Transact8x8
 	// in this function. a failing use case of Transact8x8 can be
 	// found in TestNoDevice
 	cases := []struct {
-		regaddr uint8
+		regaddr uint16
+		trtype  uint   // T8x8 or T16x8. T8x8 uses memdev256, T16x8 does not.
 		wb      []byte // bytes to write
 		erb     []byte // bytes expected to be written
 		explog  []i2cItem
-	}{{0x34, []byte{0xfe}, nil, []i2cItem{{t_START, 0, false, nil}, // random write
-		{t_WRITE, 0xa0, false, nil},
-		{t_WRITE, 0x34, false, nil},
-		{t_WRITE, 0xfe, false, nil},
-		{t_STOP, 0x00, false, nil},
-	}},
-		{0x50, nil, nil, []i2cItem{{t_START, 0, false, nil}, // just addr write
+	}{
+		// -----------------
+		// 8x8 tests below
+		{0x34, T8x8, []byte{0xfe}, nil, []i2cItem{{t_START, 0, false, nil}, // random write
+			{t_WRITE, 0xa0, false, nil},
+			{t_WRITE, 0x34, false, nil},
+			{t_WRITE, 0xfe, false, nil},
+			{t_STOP, 0x00, false, nil},
+		}},
+		{0x50, T8x8, nil, nil, []i2cItem{{t_START, 0, false, nil}, // just addr write
 			{t_WRITE, 0xa0, false, nil},
 			{t_WRITE, 0x50, false, nil},
 			{t_STOP, 0x00, false, nil},
 		}},
-		{0x30, nil, []byte{0x80, 0x81}, []i2cItem{{t_START, 0, false, nil}, // addr write, then read
+		{0x30, T8x8, nil, []byte{0x80, 0x81}, []i2cItem{{t_START, 0, false, nil}, // addr write, then read
 			{t_WRITE, 0xa0, false, nil},
 			{t_WRITE, 0x30, false, nil},
 			{t_START, 0x00, false, nil},
@@ -220,7 +235,7 @@ func TestTransactionLog(t *testing.T) {
 			{t_READ, 0x81, false, nil},
 			{t_STOP, 0x00, false, nil},
 		}},
-		{0x22, []byte{0xab, 0xcd}, []byte{0x01, 0x02, 0x03}, []i2cItem{{t_START, 0, false, nil}, // addr write, data write, then read
+		{0x22, T8x8, []byte{0xab, 0xcd}, []byte{0x01, 0x02, 0x03}, []i2cItem{{t_START, 0, false, nil}, // addr write, data write, then read
 			{t_WRITE, 0xa0, false, nil},
 			{t_WRITE, 0x22, false, nil},
 			{t_WRITE, 0xab, false, nil},
@@ -231,7 +246,45 @@ func TestTransactionLog(t *testing.T) {
 			{t_READ, 0x02, true, nil},
 			{t_READ, 0x03, false, nil},
 			{t_STOP, 0x00, false, nil},
-		}}}
+		}},
+		// -----------------
+		// 16x8 tests below
+		{0xabcd, T16x8, []byte{0xfe}, nil, []i2cItem{{t_START, 0, false, nil}, // 16x8 random write
+			{t_WRITE, 0xa0, false, nil}, // dev addr
+			{t_WRITE, 0xab, false, nil}, // reg addr hi
+			{t_WRITE, 0xcd, false, nil}, // reg addr lo
+			{t_WRITE, 0xfe, false, nil}, // data 0xfe
+			{t_STOP, 0x00, false, nil}}},
+		{0x3420, T16x8, nil, nil, []i2cItem{{t_START, 0, false, nil}, // just addr write
+			{t_WRITE, 0xa0, false, nil},
+			{t_WRITE, 0x34, false, nil},
+			{t_WRITE, 0x20, false, nil},
+			{t_STOP, 0x00, false, nil},
+		}},
+		{0x84d3, T16x8, nil, []byte{0x00, 0x00}, []i2cItem{{t_START, 0, false, nil}, // addr write, then read
+			{t_WRITE, 0xa0, false, nil},
+			{t_WRITE, 0x84, false, nil},
+			{t_WRITE, 0xd3, false, nil},
+			{t_START, 0x00, false, nil},
+			{t_WRITE, 0xa1, false, nil},
+			{t_READ, 0x00, true, nil},
+			{t_READ, 0x00, false, nil},
+			{t_STOP, 0x00, false, nil},
+		}},
+		{0x2211, T16x8, []byte{0xab, 0xcd}, []byte{0x00, 0x00, 0x00}, []i2cItem{{t_START, 0, false, nil}, // addr write, data write, then read
+			{t_WRITE, 0xa0, false, nil},
+			{t_WRITE, 0x22, false, nil},
+			{t_WRITE, 0x11, false, nil},
+			{t_WRITE, 0xab, false, nil},
+			{t_WRITE, 0xcd, false, nil},
+			{t_START, 0x00, false, nil},
+			{t_WRITE, 0xa1, false, nil},
+			{t_READ, 0x00, true, nil},
+			{t_READ, 0x00, true, nil},
+			{t_READ, 0x00, false, nil},
+			{t_STOP, 0x00, false, nil},
+		}},
+	}
 
 caseloop:
 	for j, tc := range cases {
@@ -240,11 +293,24 @@ caseloop:
 
 		so := int(tc.regaddr) + len(tc.wb)
 		eo := so + len(tc.erb)
-		copy(md256.mem[so:eo], tc.erb)
+		// only T8x8 uses memdev256
+		if tc.trtype == T8x8 {
+			copy(md256.mem[so:eo], tc.erb)
+		}
 
 		rb := make([]byte, len(tc.erb))
 
-		nw, nr, err := NewTransact8x8(m).Transact8x8(Addr7(0xa0>>1), tc.regaddr, tc.wb, rb)
+		var nw, nr int
+		var err error
+
+		switch tc.trtype {
+		case T8x8:
+			nw, nr, err = NewTransact8x8(m).Transact8x8(Addr7(0xa0>>1), uint8(tc.regaddr), tc.wb, rb)
+		case T16x8:
+			nw, nr, err = NewTransact16x8(m).Transact16x8(Addr7(0xa0>>1), tc.regaddr, tc.wb, rb)
+		default:
+			panic("wrong trtype in test case")
+		}
 
 		if err != nil {
 			t.Errorf("transaction %d is not expected to fail. it returned the error %T: %#v\n", j, err, err)
@@ -274,10 +340,12 @@ caseloop:
 			continue caseloop
 		}
 
-		// checking what the transaction wrote into the memdev256's memory
-		byteswritten := md256.mem[tc.regaddr : int(tc.regaddr)+len(tc.wb)]
-		if string(tc.wb) != string(byteswritten) {
-			t.Errorf("test case %d: expected the transaction to have written % x, it did write % x\n", j, tc.wb, byteswritten)
+		if tc.trtype == T8x8 {
+			// checking what the transaction wrote into the memdev256's memory
+			byteswritten := md256.mem[tc.regaddr : int(tc.regaddr)+len(tc.wb)]
+			if string(tc.wb) != string(byteswritten) {
+				t.Errorf("test case %d: expected the transaction to have written % x, it did write % x\n", j, tc.wb, byteswritten)
+			}
 		}
 
 		// check i2c log
