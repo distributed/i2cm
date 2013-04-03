@@ -16,7 +16,13 @@ const (
 )
 
 // EEPROM24Config is used to configure the EEPROM driver to use a
-// specific device.
+// specific device. There are two protocols in use with 24Cxx devices:
+// 24C16 and smaller are addressed with 8+3 bits: 8 bits in the "register
+// address" following the device address on the bus and up to 3 bits in the
+// device address. 24C32 and larger are addressed with 16+3 bits: 16 bits in
+// the two bytes following the device address and up to 3 bits in the device
+// address. NewEEPROM24 switches between the protocols based on the above
+// criteria.
 type EEPROM24Config struct {
 	Size       uint
 	PageSize   uint
@@ -26,9 +32,9 @@ type EEPROM24Config struct {
 var Conf_24C02 = EEPROM24Config{256, 8, 5 * time.Millisecond}
 var Conf_24C128 = EEPROM24Config{16384, 64, 5 * time.Millisecond}
 
-// ee24 supports EEPROMs which require an 8 bit word
-// address. IIRC, this includes types up to 24c16.
-// 24c32 devices and up require a 16 word address.
+// ee24 supports 24Cxx family EEPROMs, both the 8+3 bit addressed
+// (24c16 and below) and the 16+3 bit addressed (24c32 and up) kind.
+// ee24 switches between the addressing modes at runtime, c.f. hasSmallAddresses.
 type ee24 struct {
 	conf    EEPROM24Config
 	m       I2CMaster
@@ -57,9 +63,6 @@ func ispow2(i uint64) bool {
 // NewEEPROM24 constructs an I2C EEPROM driver for a device with base
 // address devaddr residing on m's bus. The EEPROM driver parameters
 // are passed in conf. Invalid configurations are rejected.
-//
-// The EEPROM driver currently uses Transactor8x8 and thus only works
-// correctly for devices with 8 bit register addresses.
 func NewEEPROM24(m I2CMaster, devaddr Addr, conf EEPROM24Config) (EEPROM24, error) {
 	if conf.PageSize > conf.Size {
 		return nil, errors.New("EEPROM24: page size needs to be smaller than array size")
