@@ -30,7 +30,7 @@ var Conf_24C128 = EEPROM24Config{16384, 64, 5 * time.Millisecond}
 // address. IIRC, this includes types up to 24c16.
 // 24c32 devices and up require a 16 word address.
 type ee24 struct {
-	EEPROM24Config
+	conf    EEPROM24Config
 	m       I2CMaster
 	tr      Transactor
 	p       uint // file pointer
@@ -85,7 +85,7 @@ func NewEEPROM24(m I2CMaster, devaddr Addr, conf EEPROM24Config) (EEPROM24, erro
 
 	e.m = m
 	e.tr = NewTransactor(m)
-	e.EEPROM24Config = conf
+	e.conf = conf
 	e.p = 0
 	e.devaddr = devaddr
 
@@ -109,8 +109,8 @@ func (e *ee24) Read(b []byte) (int, error) {
 
 	startpos := e.p
 	endpos := startpos + uint(len(b))
-	if endpos > e.Size {
-		endpos = e.Size
+	if endpos > e.conf.Size {
+		endpos = e.conf.Size
 	}
 
 	if endpos-startpos == 0 {
@@ -123,7 +123,7 @@ func (e *ee24) Read(b []byte) (int, error) {
 
 	// devaddrinc is protected from overflow by the read/write/seek logic
 	// more protection might still be desirable though
-	if e.hasSmallAddresses() {
+	if e.conf.hasSmallAddresses() {
 		devaddrinc := startpos >> 8 // 256 byte every 1 7-bit slave addr
 		devaddr := Addr7(uint8(e.devaddr.GetBaseAddr() + uint16(devaddrinc)))
 
@@ -155,7 +155,7 @@ func (e *ee24) Seek(offset int64, whence int) (int64, error) {
 	case 1:
 		nP = P + offset
 	case 2:
-		nP = int64(e.Size) + offset
+		nP = int64(e.conf.Size) + offset
 	default:
 		return P, errors.New("EEPROM24.Seek: invalid whence")
 	}
@@ -164,7 +164,7 @@ func (e *ee24) Seek(offset int64, whence int) (int64, error) {
 		return P, errors.New("EEPROM24.Seek: negative position")
 	}
 
-	if nP > int64(e.Size) {
+	if nP > int64(e.conf.Size) {
 		return P, errors.New("EEPROM24.Seek: desired position beyond end of EEPROM array")
 	}
 
@@ -176,15 +176,15 @@ func (e *ee24) Seek(offset int64, whence int) (int64, error) {
 func (e *ee24) Write(b []byte) (int, error) {
 	origsize := len(b)
 
-	for len(b) > 0 && e.p < e.Size {
+	for len(b) > 0 && e.p < e.conf.Size {
 
 		// address in page
-		aip := e.p & (e.PageSize - 1)
+		aip := e.p & (e.conf.PageSize - 1)
 		//log.Printf("e.p %#04x  aip %#02x\n", e.p, aip)
 		// get number of bytes to write in this page
 		nip := uint(len(b))
-		if nip > e.PageSize-aip {
-			nip = e.PageSize - aip
+		if nip > e.conf.PageSize-aip {
+			nip = e.conf.PageSize - aip
 		}
 
 		// do transaction
@@ -192,7 +192,7 @@ func (e *ee24) Write(b []byte) (int, error) {
 		var nw int
 		var err error
 
-		if e.hasSmallAddresses() {
+		if e.conf.hasSmallAddresses() {
 			regaddr := uint8(e.p & 0xff)
 			devaddrinc := e.p >> 8 // 256 byte every 1 7-bit slave addr
 			devaddr := Addr7(uint8(e.devaddr.GetBaseAddr() + uint16(devaddrinc)))
@@ -218,13 +218,13 @@ func (e *ee24) Write(b []byte) (int, error) {
 
 	//log.Printf("at end of write, p %d  len(b) %d\n", e.p, len(b))
 
-	if e.p == e.Size {
+	if e.p == e.conf.Size {
 		// reached the end of the array
 		if len(b) > 0 {
 			return origsize - len(b), io.EOF
 		}
 	}
-	if e.p > e.Size {
+	if e.p > e.conf.Size {
 		panic("wrote beyond end of EEPROM. is the configuration correct?")
 	}
 
