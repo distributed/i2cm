@@ -9,9 +9,10 @@ import (
 	"testing"
 )
 
-type t8x8item struct {
+// log entry for something x 8 bit transfers
+type tXx8item struct {
 	addr    Addr
-	regaddr uint8
+	regaddr uint16
 	wb, rb  []byte
 	nw, nr  int
 	err     error
@@ -27,21 +28,10 @@ type PVT24 struct {
 	t        *testing.T
 	mem      []byte
 	pagesize uint
-	log      []t8x8item
+	log      []tXx8item
 }
 
-func (p *PVT24) Transact8x8(addr Addr, regaddr uint8, wb, rb []byte) (int, int, error) {
-	// read and write logic is intentionally kept simple and different
-	// in style from the eeprom routines. maybe i will make different 
-	// mistakes both way around :)
-
-	if len(wb) > 0 && len(rb) > 0 {
-		p.t.Errorf("trying to write to and read from an EEPROM. this is not allowed.\n")
-	}
-
-	memaddr := ((uint(addr.GetBaseAddr()) & 0x07) << 8) + uint(regaddr)
-	startpagebase := memaddr & ^(p.pagesize - 1)
-
+func (p *PVT24) rwhandler(memaddr uint, startpagebase uint, wb, rb []byte) {
 	for _, b := range wb {
 		newpagebase := memaddr & ^(p.pagesize - 1)
 		if newpagebase != startpagebase {
@@ -59,8 +49,42 @@ func (p *PVT24) Transact8x8(addr Addr, regaddr uint8, wb, rb []byte) (int, int, 
 		rb[i] = p.mem[memaddr]
 		memaddr++
 	}
+}
 
-	p.log = append(p.log, t8x8item{addr, regaddr, wb, rb, len(wb), len(rb), nil})
+func (p *PVT24) Transact8x8(addr Addr, regaddr uint8, wb, rb []byte) (int, int, error) {
+	// read and write logic is intentionally kept simple and different
+	// in style from the eeprom routines. maybe i will make different 
+	// mistakes both way around :)
+
+	if len(wb) > 0 && len(rb) > 0 {
+		p.t.Errorf("trying to write to and read from an EEPROM. this is not allowed.\n")
+	}
+
+	memaddr := ((uint(addr.GetBaseAddr()) & 0x07) << 8) + uint(regaddr)
+	startpagebase := memaddr & ^(p.pagesize - 1)
+
+	p.rwhandler(memaddr, startpagebase, wb, rb)
+
+	p.log = append(p.log, tXx8item{addr, uint16(regaddr), wb, rb, len(wb), len(rb), nil})
+
+	return len(wb), len(rb), nil
+}
+
+func (p *PVT24) Transact16x8(addr Addr, regaddr uint16, wb, rb []byte) (int, int, error) {
+	// read and write logic is intentionally kept simple and different
+	// in style from the eeprom routines. maybe i will make different 
+	// mistakes both way around :)
+
+	if len(wb) > 0 && len(rb) > 0 {
+		p.t.Errorf("trying to write to and read from an EEPROM. this is not allowed.\n")
+	}
+
+	memaddr := ((uint(addr.GetBaseAddr()) & 0x07) << 16) + uint(regaddr)
+	startpagebase := memaddr & ^(p.pagesize - 1)
+
+	p.rwhandler(memaddr, startpagebase, wb, rb)
+
+	p.log = append(p.log, tXx8item{addr, regaddr, wb, rb, len(wb), len(rb), nil})
 
 	return len(wb), len(rb), nil
 }
@@ -190,6 +214,14 @@ func TestEEPROM24Conf(t *testing.T) {
 			t.Errorf("NewEEPROM24 did not fail on invalid configuration %#v", conf)
 		}
 	}
+
+	// size too big
+	{
+		conf := EEPROM24Config{2 * MAX_EEPROM_SIZE, 16, 0}
+		if _, err := NewEEPROM24(tr, devaddr, conf); err == nil {
+			t.Errorf("NewEEPROM24 did not fail on invalid (size too big) configuration %#v\n", conf)
+		}
+	}
 }
 
 // input/output testing for Read and Write. as this test employs pvt24,
@@ -203,7 +235,8 @@ func TestEEPROM24InOut(t *testing.T) {
 		buf    []byte // with read buf is just used to indicate the size, data is verified with the pvt24 mem pattern
 		nexp   int
 		errexp error
-	}{{EEPROM24Config{1024, 8, 0}, 6, true, []byte{0x22, 0x23, 0x2c, 0x2d, 0x2e, 0x2f}, 6, nil},
+	}{ // small EEPROM configurations
+		{EEPROM24Config{1024, 8, 0}, 6, true, []byte{0x22, 0x23, 0x2c, 0x2d, 0x2e, 0x2f}, 6, nil},
 		{EEPROM24Config{128, 8, 0}, 123, true, []byte{0x5f, 0x58, 0x59, 0x5a, 0x5b, 0x00, 0x00, 0x00, 0x00}, 5, nil}, // double shot EOF returns err==nil on first call
 		{EEPROM24Config{2048, 4, 0}, 9, false, []byte{0x0fe}, 1, nil},                                                // single byte write
 		{EEPROM24Config{2048, 4, 0}, 2040, false, []byte{0xfc, 0xfd, 0xfe, 0xff}, 4, nil},                            // full page
@@ -211,6 +244,15 @@ func TestEEPROM24InOut(t *testing.T) {
 		{EEPROM24Config{512, 4, 0}, 239, false, []byte{1, 2, 3, 4, 5, 6}, 6, nil},                                    // 1 byte partial, 4 bytes full, 1 byte partial
 		{EEPROM24Config{512, 8, 0}, 254, false, []byte{1, 2, 3}, 3, nil},                                             // span i2c device boundary
 		{EEPROM24Config{1024, 16, 0}, 1022, false, []byte{1, 2, 3, 4}, 2, io.EOF},                                    // test EOF. write employs a single shot EOF strategy
+		// large EEPROM configurations
+		{EEPROM24Config{1 << 16, 32, 0}, 6, true, []byte{0x22, 0x23, 0x2c, 0x2d, 0x2e, 0x2f}, 6, nil},
+		{EEPROM24Config{1 << 16, 8, 0}, (1 << 16) - 5, true, []byte{0xdf, 0xd8, 0xd9, 0xda, 0xdb, 0x00, 0x00, 0x00, 0x00}, 5, nil}, // double shot EOF returns err==nil on first call
+		{EEPROM24Config{1 << 16, 4, 0}, 9, false, []byte{0x0fe}, 1, nil},                                                           // single byte write
+		{EEPROM24Config{1 << 16, 4, 0}, 2040, false, []byte{0xfc, 0xfd, 0xfe, 0xff}, 4, nil},                                       // full page
+		{EEPROM24Config{1 << 16, 4, 0}, 513, false, []byte{0x01, 0x02, 0x03, 0x04}, 4, nil},                                        // 1 byte in next page
+		{EEPROM24Config{1 << 16, 4, 0}, 239, false, []byte{1, 2, 3, 4, 5, 6}, 6, nil},                                              // 1 byte partial, 4 bytes full, 1 byte partial
+		{EEPROM24Config{1 << 16, 8, 0}, 254, false, []byte{1, 2, 3}, 3, nil},                                                       // span i2c device boundary
+		{EEPROM24Config{1 << 16, 16, 0}, (1 << 16) - 2, false, []byte{1, 2, 3, 4}, 2, io.EOF},                                      // test EOF. write employs a single shot EOF strategy
 	}
 
 	for i, c := range cases {
@@ -262,7 +304,7 @@ func TestEEPROM24InOut(t *testing.T) {
 			n, err = ee.Write(c.buf)
 
 			if n != c.nexp {
-				t.Errorf("case %d: expected to write %d bytes, ee24 wrote %d", i, n, c.nexp)
+				t.Errorf("case %d: expected to write %d bytes, ee24 wrote %d", i, c.nexp, n)
 				continue
 			}
 

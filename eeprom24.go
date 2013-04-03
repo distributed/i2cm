@@ -6,8 +6,13 @@ package i2cm
 
 import (
 	"errors"
+	"fmt"
 	"io"
 	"time"
+)
+
+const (
+	MAX_EEPROM_SIZE = 1 << (16 + 3)
 )
 
 // EEPROM24Config is used to configure the EEPROM driver to use a
@@ -19,6 +24,7 @@ type EEPROM24Config struct {
 }
 
 var Conf_24C02 = EEPROM24Config{256, 8, 5 * time.Millisecond}
+var Conf_24C128 = EEPROM24Config{16384, 64, 5 * time.Millisecond}
 
 // ee24 supports EEPROMs which require an 8 bit word
 // address. IIRC, this includes types up to 24c16.
@@ -26,6 +32,7 @@ var Conf_24C02 = EEPROM24Config{256, 8, 5 * time.Millisecond}
 type ee24 struct {
 	EEPROM24Config
 	m       I2CMaster
+	tr      Transactor
 	p       uint // file pointer
 	devaddr Addr
 }
@@ -58,6 +65,10 @@ func NewEEPROM24(m I2CMaster, devaddr Addr, conf EEPROM24Config) (EEPROM24, erro
 		return nil, errors.New("EEPROM24: page size needs to be smaller than array size")
 	}
 
+	if conf.Size > MAX_EEPROM_SIZE {
+		return nil, fmt.Errorf("EEPROM24: invalid size in configuration. passed %d bytes, a maximum of %d bytes are supported", conf.Size, MAX_EEPROM_SIZE)
+	}
+
 	if !ispow2(uint64(conf.Size)) {
 		return nil, errors.New("EEPROM24: array size needs to be a power of 2")
 	}
@@ -73,11 +84,23 @@ func NewEEPROM24(m I2CMaster, devaddr Addr, conf EEPROM24Config) (EEPROM24, erro
 	var e ee24
 
 	e.m = m
+	e.tr = NewTransactor(m)
 	e.EEPROM24Config = conf
 	e.p = 0
 	e.devaddr = devaddr
 
 	return &e, nil
+}
+
+// hasSmallAddress returs true if the EEPROM config in question uses the small,
+// i.e. the 8 bit + 3 bit, addressing convention. EEPROMs 24c16 and below
+// use the small addressing convention, 24c32 and up use the big addressing
+// convention, i.e. the 16 bit + 3 bit one.
+func (e EEPROM24Config) hasSmallAddresses() bool {
+	if e.Size <= (1 << 11) {
+		return true
+	}
+	return false
 }
 
 func (e *ee24) Read(b []byte) (int, error) {
@@ -94,15 +117,27 @@ func (e *ee24) Read(b []byte) (int, error) {
 		return 0, io.EOF
 	}
 
-	devaddrinc := startpos >> 8 // 256 byte every 1 7-bit slave addr
-	devaddr := Addr7(uint8(e.devaddr.GetBaseAddr() + uint16(devaddrinc)))
-
 	rb := b[0:(endpos - startpos)]
+	var nr int
+	var err error
 
-	regaddr := uint8(startpos & 0xff)
+	// devaddrinc is protected from overflow by the read/write/seek logic
+	// more protection might still be desirable though
+	if e.hasSmallAddresses() {
+		devaddrinc := startpos >> 8 // 256 byte every 1 7-bit slave addr
+		devaddr := Addr7(uint8(e.devaddr.GetBaseAddr() + uint16(devaddrinc)))
 
-	t := NewTransact8x8(e.m)
-	_, nr, err := t.Transact8x8(devaddr, regaddr, nil, rb)
+		regaddr := uint8(startpos & 0xff)
+
+		_, nr, err = e.tr.Transact8x8(devaddr, regaddr, nil, rb)
+	} else {
+		devaddrinc := startpos >> 16 // 256 bytes every 1 7-bit slave addr
+		devaddr := Addr7(uint8(e.devaddr.GetBaseAddr() + uint16(devaddrinc)))
+
+		regaddr := uint16(startpos)
+
+		_, nr, err = e.tr.Transact16x8(devaddr, regaddr, nil, rb)
+	}
 
 	e.p += uint(nr)
 
@@ -142,9 +177,6 @@ func (e *ee24) Write(b []byte) (int, error) {
 	origsize := len(b)
 
 	for len(b) > 0 && e.p < e.Size {
-		regaddr := uint8(e.p & 0xff)
-		devaddrinc := e.p >> 8 // 256 byte every 1 7-bit slave addr
-		devaddr := Addr7(uint8(e.devaddr.GetBaseAddr() + uint16(devaddrinc)))
 
 		// address in page
 		aip := e.p & (e.PageSize - 1)
@@ -157,7 +189,23 @@ func (e *ee24) Write(b []byte) (int, error) {
 
 		// do transaction
 		//log.Printf("at p %#04x, pagesize %#02x read nip %#02x\n", e.p, e.PageSize, nip)
-		nw, _, err := NewTransact8x8(e.m).Transact8x8(devaddr, regaddr, b[0:nip], nil)
+		var nw int
+		var err error
+
+		if e.hasSmallAddresses() {
+			regaddr := uint8(e.p & 0xff)
+			devaddrinc := e.p >> 8 // 256 byte every 1 7-bit slave addr
+			devaddr := Addr7(uint8(e.devaddr.GetBaseAddr() + uint16(devaddrinc)))
+
+			nw, _, err = e.tr.Transact8x8(devaddr, regaddr, b[0:nip], nil)
+		} else {
+			regaddr := uint16(e.p)
+			devaddrinc := e.p >> 16 // 256 bytes every 1 7-bit slave addr
+			devaddr := Addr7(uint8(e.devaddr.GetBaseAddr() + uint16(devaddrinc)))
+
+			nw, _, err = e.tr.Transact16x8(devaddr, regaddr, b[0:nip], nil)
+		}
+
 		if err != nil {
 			return origsize - len(b) + nw, err
 		}
