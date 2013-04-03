@@ -4,6 +4,10 @@
 
 // Package i2cm defines low level I2C master access and implements I2C
 // transactions and an 24Cxx EEPROM driver.
+//
+// As of April 2013, there is one I2C driver implementation using the
+// bus pirate from Dangerous Prototypes. Get the package at
+// github.com/distributed/bp.
 package i2cm
 
 // I2CMaster offers low-level access to an I2C bus.
